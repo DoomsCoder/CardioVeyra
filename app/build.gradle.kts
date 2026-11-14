@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.cardiolens"
+    namespace = "com.example.cardioveyra"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.cardiolens"
+        applicationId = "com.example.cardioveyra"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

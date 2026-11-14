@@ -16,6 +16,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CardioLens"
+rootProject.name = "CardioVeyra"
 include(":app")
  
