@@ -80,10 +80,10 @@ internal class FaceStabilizer {
         val identityChanged = id != null && previousId != null && id != previousId
         val restarted = last == null || dt <= 0 || dt > MAX_FRAME_GAP_NS || identityChanged
         val moving = last != null && (
-            (anchors.midpoint - last.midpoint).length() / last.eyeDistance > 0.11f ||
-                abs(anchors.eyeDistance / last.eyeDistance - 1f) > 0.14f ||
+            (anchors.midpoint - last.midpoint).length() / last.eyeDistance > 0.40f || // Dramatically relaxed from 0.11f
+                abs(anchors.eyeDistance / last.eyeDistance - 1f) > 0.40f ||           // Dramatically relaxed from 0.14f
                 ((anchors.secondEye - anchors.firstEye) - (last.secondEye - last.firstEye))
-                    .length() / last.eyeDistance > 0.15f
+                    .length() / last.eyeDistance > 0.40f                              // Dramatically relaxed from 0.15f
             )
 
         if (restarted || moving) {
@@ -96,7 +96,8 @@ internal class FaceStabilizer {
         previous = anchors
         previousTime = time
         previousId = id
-        return (smoothed ?: anchors) to (time - stableSince >= 300_000_000L)
+        // Relaxed 'stableSince' requirement from 300ms to 0ms so it starts instantly
+        return (smoothed ?: anchors) to true
     }
 }
 

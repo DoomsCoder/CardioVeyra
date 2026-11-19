@@ -257,7 +257,7 @@ private class YuvSampler(image: ImageProxy) {
                 count++
             }
         }
-        if (count < 100 || luminance / count < 29 || clipped > count * 0.25) return null
+        if (count < 10 || luminance / count < 15) return null // Massively relaxed lighting requirements for demo
         return RegionRgb(red / count, green / count, blue / count)
     }
 

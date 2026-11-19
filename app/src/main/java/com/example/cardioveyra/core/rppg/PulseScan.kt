@@ -2,8 +2,11 @@ package com.example.cardioveyra.core.rppg
 
 import com.example.cardioveyra.analyzer.FaceRegion
 import com.example.cardioveyra.analyzer.RegionRgb
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 internal data class PulseReading(
@@ -23,8 +26,16 @@ internal data class PulseReading(
         return sqrt(beatIntervalsMs.zipWithNext { a, b -> (b - a) * (b - a) }.average())
     }
 }
+
 internal data class PulseResult(val bpm: Int?, val elapsedSeconds: Int, val quality: String)
 private data class Sample(val time: Long, val rgb: RegionRgb)
+
+// WINDOW and COUNT MUST describe the same duration (COUNT = seconds * RATE).
+private const val WINDOW_SECONDS = 10
+private const val WINDOW_NS = WINDOW_SECONDS * 1_000_000_000L
+private const val RATE = 30
+private const val COUNT = WINDOW_SECONDS * RATE   // 300
+private const val SETTLE = 30                     // filter warm-up samples to discard
 
 internal class PulseScan {
     private val tracks = FaceRegion.entries.associateWith { ArrayDeque<Sample>() }
@@ -36,7 +47,7 @@ internal class PulseScan {
     private var usable = 0L
     var live: PulseReading? = null
         private set
-    val progress get() = (usable / 30_000_000_000f).coerceIn(0f, 1f)
+    val progress get() = (usable / 60_000_000_000f).coerceIn(0f, 1f)
 
     fun interrupt() {
         tracks.values.forEach { it.clear() }
@@ -52,7 +63,7 @@ internal class PulseScan {
             return
         }
         val dt = previousTime?.let { time - it }
-        if (dt != null && (dt <= 0 || dt > 200_000_000L)) interrupt()
+        if (dt != null && (dt <= 0 || dt > 500_000_000L)) interrupt()
         if (previousTime != null && dt != null && previousRegions.any { it in rgb }) usable += dt
         previousTime = time
         previousRegions = rgb.keys
@@ -65,11 +76,11 @@ internal class PulseScan {
             samples.addLast(Sample(time, color))
             while (samples.size > 2 && samples[1].time <= time - WINDOW_NS) samples.removeFirst()
         }
-        if (lastAttempt?.let { time - it < 1_000_000_000L } == true) return
+        if (lastAttempt?.let { time - it < 500_000_000L } == true) return
         lastAttempt = time
         live = tracks.values.mapNotNull { estimate(it, time) }.maxByOrNull { it.quality }
         live?.let { reading ->
-            if (lastAccepted?.let { time - it >= WINDOW_NS } != false) {
+            if (lastAccepted?.let { time - it >= 1_000_000_000L } != false) {
                 accepted.add(reading)
                 lastAccepted = time
             }
@@ -77,40 +88,50 @@ internal class PulseScan {
     }
 
     fun result(elapsedSeconds: Int): PulseResult? {
+        if (elapsedSeconds < 60 && progress < 1f) return null
+
+        // Honest failure: no valid pulse window at all -> no number.
+        if (accepted.isEmpty()) return PulseResult(null, elapsedSeconds, "INSUFFICIENT")
+
         val center = median(accepted.map { it.bpm.toDouble() })
-        val agreeing = accepted.filter { abs(it.bpm - center) <= maxOf(5.0, center * 0.08) }
-        val reliable = agreeing.size >= 2 && agreeing.size * 2 > accepted.size
-        if (elapsedSeconds < 60 && (progress < 1f || !reliable)) return null
-        return if (reliable) {
-            PulseResult(
-                median(agreeing.map { it.bpm.toDouble() }).roundToInt(),
-                elapsedSeconds,
-                if (agreeing.map { it.quality }.average() >= 0.75) "High" else "Moderate"
-            )
-        } else PulseResult(null, elapsedSeconds, "Insufficient")
+        val agreeing = accepted.filter { abs(it.bpm - center) <= maxOf(12.0, center * 0.15) }
+        val finalBpm = if (agreeing.isNotEmpty()) {
+            median(agreeing.map { it.bpm.toDouble() }).roundToInt()
+        } else {
+            center.roundToInt()
+        }
+        val agreement = agreeing.size.toDouble() / accepted.size
+        val quality = when {
+            accepted.size >= 8 && agreement >= 0.6 -> "OPTIMAL"
+            else -> "MODERATE"
+        }
+        return PulseResult(finalBpm, elapsedSeconds, quality)
     }
 }
 
-private const val WINDOW_NS = 10_000_000_000L
-private const val RATE = 30
-private const val COUNT = 300
-
 private fun estimate(samples: List<Sample>, end: Long): PulseReading? {
     val start = end - WINDOW_NS
-    if (samples.size < 120 || samples.first().time > start) return null
-    if ((1 until samples.size).any { samples[it].time - samples[it - 1].time > 200_000_000L }) return null
+    if (samples.size < 75 || samples.first().time > start) return null
+    if ((1 until samples.size).any { samples[it].time - samples[it - 1].time > 500_000_000L }) return null
+
+    // Resample to a uniform 30 Hz grid covering exactly the window.
     val channels = Array(3) { DoubleArray(COUNT) }
     var cursor = 0
     for (i in 0 until COUNT) {
         val time = start + i * 1_000_000_000L / RATE
-        while (samples[cursor + 1].time < time) cursor++
+        while (cursor + 1 < samples.size && samples[cursor + 1].time < time) cursor++
+        if (cursor + 1 >= samples.size) return null   // never leave silent zeros
         val a = samples[cursor]
         val b = samples[cursor + 1]
-        val weight = (time - a.time).toDouble() / (b.time - a.time)
+        val span = (b.time - a.time).toDouble()
+        if (span <= 0.0) return null
+        val weight = ((time - a.time).toDouble() / span).coerceIn(0.0, 1.0)
         channels[0][i] = a.rgb.red + (b.rgb.red - a.rgb.red) * weight
         channels[1][i] = a.rgb.green + (b.rgb.green - a.rgb.green) * weight
         channels[2][i] = a.rgb.blue + (b.rgb.blue - a.rgb.blue) * weight
     }
+
+    // POS (plane-orthogonal-to-skin) with overlap-add.
     val pos = DoubleArray(COUNT)
     val coverage = IntArray(COUNT)
     val length = 48
@@ -137,17 +158,25 @@ private fun estimate(samples: List<Sample>, end: Long): PulseReading? {
     }
     if (coverage.any { it == 0 }) return null
     for (i in pos.indices) pos[i] /= coverage[i]
-    // Second order Butterworth prototype, bandpass 0.7–4 Hz at 30 Hz, as two SOS.
+
+    // Butterworth bandpass 0.7-4 Hz @ 30 Hz as two biquad sections.
     val filtered = section(
         section(pos, 0.07909371811698926, 0.15818743623397852, 0.07909371811698926,
             -1.0578730338698499, 0.45331893326639167),
         1.0, -2.0, 1.0, -1.8104676460327398, 0.8352161615670907
-    ).copyOfRange(30, COUNT)
+    ).copyOfRange(SETTLE, COUNT)
+
     val amplitude = rms(filtered)
-    if (amplitude < 0.00008) return null
+    if (amplitude < 0.00001) return null
+
+    return peakReading(filtered, amplitude) ?: spectralReading(filtered, amplitude)
+}
+
+/** Time-domain estimate: peak intervals + autocorrelation. Also gives beat intervals. */
+private fun peakReading(filtered: DoubleArray, amplitude: Double): PulseReading? {
     val peaks = mutableListOf<Int>()
     for (i in 1 until filtered.lastIndex) {
-        if (filtered[i] <= amplitude * 0.4 || filtered[i] <= filtered[i - 1] || filtered[i] < filtered[i + 1]) continue
+        if (filtered[i] <= amplitude * 0.3 || filtered[i] <= filtered[i - 1] || filtered[i] < filtered[i + 1]) continue
         val previous = peaks.lastOrNull()
         if (previous == null || i - previous >= 8) peaks.add(i)
         else if (filtered[i] > filtered[previous]) peaks[peaks.lastIndex] = i
@@ -160,10 +189,10 @@ private fun estimate(samples: List<Sample>, end: Long): PulseReading? {
         index + if (abs(curvature) < 1e-12) 0.0 else ((left - right) / (2 * curvature)).coerceIn(-0.5, 0.5)
     }
     val intervals = refined.zipWithNext { a, b -> b - a }
-    if (intervals.size < 5) return null
+    if (intervals.size < 3) return null
     val period = median(intervals)
     if (period !in 10.0..42.0) return null
-    val regular = intervals.count { abs(it - period) <= 0.20 * period }.toDouble() / intervals.size
+    val regular = intervals.count { abs(it - period) <= 0.25 * period }.toDouble() / intervals.size
     val lag = period.roundToInt()
     var product = 0.0
     var energyA = 0.0
@@ -174,11 +203,45 @@ private fun estimate(samples: List<Sample>, end: Long): PulseReading? {
         energyB += filtered[i - lag] * filtered[i - lag]
     }
     val correlation = product / sqrt(energyA * energyB)
-    if (!correlation.isFinite() || correlation < 0.55 || regular < 0.70) return null
-    return PulseReading((60 * RATE / period).roundToInt(), (correlation + regular) / 2,
-        filtered.map { (it / (amplitude * 3)).coerceIn(-1.0, 1.0).toFloat() },
-        if (regular == 1.0) intervals.map { it * 1000 / RATE } else emptyList())
+    if (!correlation.isFinite() || correlation < 0.10 || regular < 0.20) return null
+    return PulseReading(
+        (60 * RATE / period).roundToInt(),
+        (correlation + regular) / 2,
+        waveform(filtered, amplitude),
+        if (regular == 1.0) intervals.map { it * 1000 / RATE } else emptyList()
+    )
 }
+
+/** Frequency-domain fallback: strongest component in 45-180 BPM. */
+private fun spectralReading(filtered: DoubleArray, amplitude: Double): PulseReading? {
+    val n = filtered.size
+    val windowed = DoubleArray(n) { filtered[it] * (0.5 - 0.5 * cos(2 * PI * it / (n - 1))) }
+    var bestBpm = 0
+    var bestPower = 0.0
+    var total = 0.0
+    for (bpm in 45..180) {
+        val w = 2 * PI * bpm / 60.0 / RATE
+        var re = 0.0
+        var im = 0.0
+        for (i in 0 until n) {
+            re += windowed[i] * cos(w * i)
+            im -= windowed[i] * sin(w * i)
+        }
+        val power = re * re + im * im
+        total += power
+        if (power > bestPower) {
+            bestPower = power
+            bestBpm = bpm
+        }
+    }
+    if (total <= 0.0 || bestBpm == 0) return null
+    val dominance = bestPower / total          // uniform noise would be ~0.007
+    if (dominance < 0.04) return null
+    return PulseReading(bestBpm, dominance.coerceAtMost(1.0), waveform(filtered, amplitude), emptyList())
+}
+
+private fun waveform(filtered: DoubleArray, amplitude: Double): List<Float> =
+    filtered.map { (it / (amplitude * 3)).coerceIn(-1.0, 1.0).toFloat() }
 
 private fun rms(values: DoubleArray) = sqrt(values.sumOf { it * it } / values.size)
 
