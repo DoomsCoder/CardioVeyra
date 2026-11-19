@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
                         containerColor = Color.Transparent,
                         contentWindowInsets = WindowInsets(0, 0, 0, 0),
                         topBar = {
-                            if (showBars && currentDestination != Destination.Stats) {
+                            if (showBars && currentDestination != Destination.Stats && currentDestination != Destination.Settings ) {
                                 CardioTopBar()
                             }
                         },
