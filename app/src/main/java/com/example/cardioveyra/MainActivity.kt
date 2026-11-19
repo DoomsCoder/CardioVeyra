@@ -22,8 +22,10 @@ import com.example.cardioveyra.ui.components.CardioTopBar
 import com.example.cardioveyra.ui.navigation.Destination
 import com.example.cardioveyra.ui.screens.cardio.CardioScreen
 import com.example.cardioveyra.ui.screens.scan.ScanScreen
+import com.example.cardioveyra.ui.onboarding.OnboardingScreen
 import com.example.cardioveyra.ui.screens.settings.SettingsScreen
 import com.example.cardioveyra.ui.screens.statistics.StatisticsScreen
+import com.example.cardioveyra.ui.screens.details.ScanDetailsScreen
 import com.example.cardioveyra.ui.theme.CardioVeyraTheme
 
 class MainActivity : ComponentActivity() {
@@ -51,7 +53,7 @@ class MainActivity : ComponentActivity() {
                         containerColor = Color.Transparent,
                         contentWindowInsets = WindowInsets(0, 0, 0, 0),
                         topBar = {
-                            if(showBars) {
+                            if (showBars && currentDestination != Destination.Stats) {
                                 CardioTopBar()
                             }
                         },
@@ -82,14 +84,21 @@ class MainActivity : ComponentActivity() {
                                     when (key) {
                                         Destination.Cardio -> CardioScreen(
                                             onNavigateToScan = {
-                                                backStack.add(Destination.Scan)
+                                                backStack.add(Destination.Onboarding)
                                             }
                                         )
                                         Destination.Stats -> StatisticsScreen()
                                         Destination.Settings -> SettingsScreen()
-                                        Destination.Scan -> ScanScreen(
+                                        Destination.Onboarding -> OnboardingScreen(
+                                            onFinish = {
+                                                // Pop Onboarding and go to LiveScan
+                                                backStack.remove(Destination.Onboarding)
+                                                backStack.add(Destination.LiveScan)
+                                            }
+                                        )
+                                        Destination.LiveScan -> ScanScreen(
                                             onCloseClicked = {
-                                                backStack.remove(Destination.Scan)
+                                                backStack.remove(Destination.LiveScan)
                                             }
                                         )
                                     }

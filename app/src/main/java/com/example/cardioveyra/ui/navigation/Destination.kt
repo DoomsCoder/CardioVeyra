@@ -15,11 +15,16 @@ sealed interface Destination : NavKey {
     @Serializable
     data object Settings : Destination
     @Serializable
-    data object Scan : Destination {
+    data object Onboarding : Destination {
         override val showSystemBars: Boolean
             get() = false
     }
-
+    @Serializable
+    data object LiveScan : Destination {
+        override val showSystemBars: Boolean
+            get() = false
+    }
+    
     companion object {
         val entries: List<Destination>
             get() = listOf(Cardio, Stats, Settings)
