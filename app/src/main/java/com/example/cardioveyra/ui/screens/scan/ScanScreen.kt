@@ -1,34 +1,54 @@
-package com.example.cardioveyra.ui.screens.scan
+﻿package com.example.cardioveyra.ui.screens.scan
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.cardioveyra.analyzer.FaceRegion
+import com.example.cardioveyra.analyzer.RegionRgb
+import com.example.cardioveyra.core.rppg.PulseReading
+import com.example.cardioveyra.core.rppg.PulseResult
+import com.example.cardioveyra.core.rppg.PulseScan
 import com.example.cardioveyra.ui.theme.CardioVeyraTheme
 import com.example.cardioveyra.ui.theme.ThemeState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
-// Theme Colors from your design
 val NavyBg = Color(0xFF0B0F19)
 val SignalGreen = Color(0xFF10B981)
 val WarningYellow = Color(0xFFF59E0B)
@@ -36,108 +56,114 @@ val ErrorGrey = Color(0xFF707481)
 val BrandRed = Color(0xFFBA002C)
 val SurfaceDark = Color(0xFF141923)
 
-@OptIn(ExperimentalMaterial3Api::class)
+private data class Capture(val timestamp: Long, val rgb: Map<FaceRegion, RegionRgb>)
+
 @Composable
-fun ScanScreen(
-    onCloseClicked: () -> Unit = {}
-) {
-    // State to simulate rPPG analyzer output
-    var scanState by remember { mutableStateOf(ScanQualityState.OPTIMAL) }
-    var progress by remember { mutableFloatStateOf(0.45f) } // 45% filled
-
-    var showCancelDialog by remember {
-        mutableStateOf(false)
+fun ScanScreen(onCloseClicked: () -> Unit = {}) {
+    var attempt by remember { mutableStateOf(0) }
+    key(attempt) {
+        ScanAttempt(onCloseClicked, onRetry = { attempt++ })
     }
+}
 
-    BackHandler(enabled = true) {
-        showCancelDialog = true
-    }
+@Composable
+private fun ScanAttempt(onClose: () -> Unit, onRetry: () -> Unit) {
+    var quality by remember { mutableStateOf(ScanQualityState.FACE_LOST) }
+    var progress by remember { mutableStateOf(0f) }
+    var reading by remember { mutableStateOf<PulseReading?>(null) }
+    var result by remember { mutableStateOf<PulseResult?>(null) }
+    var showCancel by remember { mutableStateOf(false) }
+    val captures = remember { Channel<Capture>(64, BufferOverflow.DROP_OLDEST) }
+    val preview = LocalInspectionMode.current
 
-    // Dynamic color based on state
-    val activeColor by animateColorAsState(
-        targetValue = when (scanState) {
-            ScanQualityState.OPTIMAL -> SignalGreen
-            ScanQualityState.MOTION_WARNING -> WarningYellow
-            ScanQualityState.POOR_LIGHTING -> WarningYellow // Map poor lighting to yellow
-            ScanQualityState.FACE_LOST -> ErrorGrey
-        },
-        animationSpec = tween(500),
-        label = "RingColor"
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            // Fix: Replaced hardcoded NavyBg with a theme-aware background
-            .background(if (ThemeState.isDarkTheme == true || (ThemeState.isDarkTheme == null && isSystemInDarkTheme())) NavyBg else Color(0xFFF8F9FA))
-            // Removed .statusBarsPadding() so the TopNavBar sits flush against the top edge 
-            // inside the edge-to-edge window. The TopNavBar should handle its own safe area padding.
-            .navigationBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // 1. Top Navigation Bar
-        // Pass the lambda that opens the dialog to the TopNavBar, NOT onCloseClicked directly
-        TopNavBar(
-            activeColor = activeColor, 
-            onCancel = { showCancelDialog = true }
-        )
-
-        Spacer(modifier = Modifier.weight(0.5f))
-
-        // 2. Centerpiece: Progress Ring & Camera Viewport
-        CameraProgressRing(
-            progress = progress,
-            activeColor = activeColor,
-            state = scanState,
-            onStateChange = { newState ->
-                // The ML Kit analyzer will constantly update this state!
-                scanState = newState
-            }
-        )
-
-        Spacer(modifier = Modifier.weight(0.5f))
-
-        // 3. Real-Time Status Text
-        StatusSection(state = scanState)
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // 4. Telemetry Pill
-        TelemetryPill(state = scanState)
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // 5. Bottom ECG Waveform
-        AnimatedEcgWave(
-            activeColor = activeColor,
-            isPaused = scanState != ScanQualityState.OPTIMAL
-        )
-    }
-
-    if(showCancelDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                showCancelDialog = false
-            },
-            title = { Text("Cancel Scan?") },
-            text = { Text("If you leave now, your current scan progress will be lost.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showCancelDialog = false
-                        // User confirmed they want to leave. Trigger the navigation callback!
-                        onCloseClicked()
+    if (!preview) {
+        LaunchedEffect(Unit) {
+            withContext(Dispatchers.Default) {
+                val scan = PulseScan()
+                val started = SystemClock.elapsedRealtime()
+                while (true) {
+                    repeat(64) {
+                        val frame = captures.tryReceive().getOrNull() ?: return@repeat
+                        scan.add(frame.timestamp, frame.rgb)
                     }
-                ) {
-                    Text("End Scan", color = Color.Red)
+                    val summary = scan.result(((SystemClock.elapsedRealtime() - started) / 1000).toInt())
+                    withContext(Dispatchers.Main) {
+                        progress = scan.progress
+                        reading = scan.live
+                        result = summary
+                    }
+                    if (summary != null) break
+                    delay(100)
                 }
-            },
+            }
+        }
+    }
+
+    val summary = result
+    BackHandler { if (summary == null) showCancel = true else onClose() }
+    val color = when (quality) {
+        ScanQualityState.OPTIMAL -> SignalGreen
+        ScanQualityState.FACE_LOST, ScanQualityState.PERMISSION_DENIED, ScanQualityState.CAMERA_ERROR -> ErrorGrey
+        else -> WarningYellow
+    }
+    val dark = ThemeState.isDarkTheme ?: isSystemInDarkTheme()
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(if (dark) NavyBg else Color(0xFFF8F9FA))
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        TopNavBar(activeColor = color, onCancel = { if (summary == null) showCancel = true else onClose() })
+        if (summary != null) {
+            Text(
+                summary.bpm?.let { "Estimated pulse: $it BPM" } ?: "Signal too weak",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            Text("Duration: ${summary.elapsedSeconds} s")
+            Text("Signal quality: ${summary.quality}")
+            if (summary.bpm == null) Text("Rescan in even lighting and keep your head still.")
+            Button(onClick = onRetry) { Text("Rescan") }
+            TextButton(onClick = onClose) { Text("Done") }
+        } else {
+            CameraProgressRing(
+                activeColor = color,
+                progress = progress,
+                onStateChange = { state ->
+                    quality = state
+                    if (state != ScanQualityState.OPTIMAL) captures.trySend(Capture(0L, emptyMap()))
+                },
+                onCapture = { frame -> captures.trySend(Capture(frame.timestampNs, frame.rgb)) }
+            )
+            StatusSection(state = quality)
+            val live = reading.takeIf { quality == ScanQualityState.OPTIMAL }
+            Text(
+                live?.let { "Estimated pulse: ${it.bpm} BPM" } ?: "Collecting a stable pulse signal",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text("${(progress * 100).roundToInt()}% of capture target")
+            Canvas(Modifier.fillMaxWidth().padding(horizontal = 24.dp).height(90.dp)) {
+                drawLine(color.copy(alpha = 0.25f), Offset(0f, center.y), Offset(size.width, center.y))
+                live?.waveform?.let { waveform ->
+                    val path = Path()
+                    waveform.forEachIndexed { index, value ->
+                        val x = size.width * index / waveform.lastIndex
+                        val y = center.y - value * size.height * 0.45f
+                        if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    drawPath(path, color, style = Stroke(2.dp.toPx()))
+                }
+            }
+        }
+    }
+    if (showCancel && summary == null) {
+        AlertDialog(
+            onDismissRequest = { showCancel = false },
+            title = { Text("End scan?") },
+            confirmButton = { TextButton(onClick = onClose) { Text("End scan") } },
             dismissButton = {
-                TextButton(
-                    onClick = { showCancelDialog = false }
-                ) {
-                    Text("Keep Scanning")
-                }
+                TextButton(onClick = { showCancel = false }) { Text("Keep scanning") }
             }
         )
     }
@@ -146,7 +172,5 @@ fun ScanScreen(
 @Preview(showBackground = true)
 @Composable
 fun PreviewScanScreen() {
-    CardioVeyraTheme {
-        ScanScreen()
-    }
+    CardioVeyraTheme { ScanScreen() }
 }

@@ -46,7 +46,7 @@ fun TelemetryPill(state: ScanQualityState) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Default.Favorite, contentDescription = null, tint = BrandRed, modifier = Modifier.size(20.dp))
             Text("Pulse", color = labelColor, fontSize = 14.sp)
-            Text(if (state == ScanQualityState.FACE_LOST) "--" else "72", color = textColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("--", color = textColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             Text("BPM", color = labelColor, fontSize = 10.sp)
         }
 
@@ -61,12 +61,12 @@ fun TelemetryPill(state: ScanQualityState) {
                 text = when (state) {
                     ScanQualityState.OPTIMAL -> "High"
                     ScanQualityState.MOTION_WARNING, ScanQualityState.POOR_LIGHTING -> "Low"
-                    ScanQualityState.FACE_LOST -> "None"
+                    else -> "Unavailable"
                 },
                 color = when (state) {
                     ScanQualityState.OPTIMAL -> SignalGreen
                     ScanQualityState.MOTION_WARNING, ScanQualityState.POOR_LIGHTING -> WarningYellow
-                    ScanQualityState.FACE_LOST -> ErrorGrey
+                    else -> ErrorGrey
                 },
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold

@@ -1,145 +1,212 @@
-package com.example.cardioveyra.ui.screens.scan
+﻿package com.example.cardioveyra.ui.screens.scan
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.view.View
+import android.widget.FrameLayout
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.camera.view.TransformExperimental
+import androidx.camera.view.transform.CoordinateTransform
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.cardioveyra.analyzer.FaceAnalyzer
-import com.example.cardioveyra.core.rppg.SignalBuffer
+import com.example.cardioveyra.analyzer.FaceFrame
 import java.util.concurrent.Executors
 
 @Composable
-fun CameraXLivePreview(
+internal fun CameraXLivePreview(
     modifier: Modifier = Modifier,
-    onStateChanged: (ScanQualityState) -> Unit
+    onStateChanged: (ScanQualityState) -> Unit,
+    onCapture: (FaceFrame) -> Unit
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
+    val onState by rememberUpdatedState(onStateChanged)
+    val onFrame by rememberUpdatedState(onCapture)
+    fun cameraGranted() = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
 
-    var hasCameraPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED
-        )
+    var granted by remember { mutableStateOf(cameraGranted()) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        granted = it
+        if (!it) onState(ScanQualityState.PERMISSION_DENIED)
     }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-        onResult = { granted ->
-            hasCameraPermission = granted
-        }
-    )
-
     LaunchedEffect(Unit) {
-        if (!hasCameraPermission) {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        }
+        if (!granted) launcher.launch(Manifest.permission.CAMERA)
     }
-
-    
-    if (!hasCameraPermission) return
-    
-    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-    // Initialize the signal buffer here so it persists across recompositions
-    val signalBuffer = remember { SignalBuffer(capacity = 450) } // 15 seconds at 30 FPS
+    if (!granted) return
 
     AndroidView(
         modifier = modifier,
-        factory = { ctx ->
-            val previewView = PreviewView(ctx).apply {
-                // FILL_CENTER ensures the video feed fills your circular crop perfectly
-                scaleType = PreviewView.ScaleType.FILL_CENTER
-            }
+        factory = { CameraFaceView(it, lifecycleOwner, { state -> onState(state) }, { frame -> onFrame(frame) }) },
+        onReset = null,
+        onRelease = { it.release() }
+    )
+}
 
-            val executor = ContextCompat.getMainExecutor(ctx)
-            val analyzerExecutor = Executors.newSingleThreadExecutor()
+@OptIn(TransformExperimental::class)
+private class CameraFaceView(
+    context: Context,
+    private val owner: LifecycleOwner,
+    private val onState: (ScanQualityState) -> Unit,
+    private val onCapture: (FaceFrame) -> Unit
+) : FrameLayout(context), DefaultLifecycleObserver {
+    private val previewView = PreviewView(context).apply {
+        scaleType = PreviewView.ScaleType.FILL_CENTER
+        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+    }
+    private val overlay = FaceOverlay(context, previewView)
+    private val executor = Executors.newSingleThreadExecutor()
+    private val mainExecutor = ContextCompat.getMainExecutor(context)
+    private var provider: ProcessCameraProvider? = null
+    private var preview: Preview? = null
+    private var analysis: ImageAnalysis? = null
+    private var analyzer: FaceAnalyzer? = null
+    private var released = false
+    private val staleFrame = Runnable {
+        overlay.frame = null
+        onState(ScanQualityState.FACE_LOST)
+    }
 
-            cameraProviderFuture.addListener({
-                val cameraProvider = cameraProviderFuture.get()
-
-                // 1. Set up the Preview Use Case
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = previewView.surfaceProvider
-                }
-
-                val imageAnalysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888) // Use YUV for efficiency
-                    .build()
-                    .also { analysis ->
-                        analysis.setAnalyzer(analyzerExecutor, FaceAnalyzer(
-                            onStateChanged = { newState ->
-                                onStateChanged(newState)
-                                // TASK 4: Wiring logic
-                                // If the state is not OPTIMAL, clear the buffer so we don't feed garbage to the ML model
-                                if (newState == ScanQualityState.FACE_LOST || newState == ScanQualityState.MOTION_WARNING) {
-                                    signalBuffer.clear()
-                                }
-                            },
-                            onRgbExtracted = { r, g, b ->
-                                // Feed the clean spatial averages into our time-series buffer
-                                signalBuffer.addSample(r, g, b)
-
-                                if (signalBuffer.isFull()) {
-                                    // Buffer is full! Time to run TFLite Inference!
-                                    val rawTfLiteInput = signalBuffer.toFlatFloatArray()
-                                    // TODO: Pass rawTfLiteInput to your model
-                                }
-                            }
-                        ))
+    init {
+        addView(previewView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(overlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        owner.lifecycle.addObserver(this)
+        previewView.doOnLayout {
+            if (!released) {
+                val future = ProcessCameraProvider.getInstance(context)
+                future.addListener({
+                    if (!released) {
+                        try {
+                            bindCamera(future.get())
+                        } catch (failure: Exception) {
+                            android.util.Log.e("CardioVeyraCamera", "Camera binding failed", failure)
+                            release()
+                            onState(ScanQualityState.CAMERA_ERROR)
+                        }
                     }
-
-                // 2. Select Front Camera (Crucial for rPPG)
-                val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-
-                try {
-                    // Unbind use cases before rebinding
-                    cameraProvider.unbindAll()
-
-                    // Bind use cases to camera
-                    cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        cameraSelector,
-                        preview,
-                        imageAnalysis,
-                        // NOTE: Later, you will also bind your ImageAnalysis use case here for rPPG!
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }, executor)
-
-            previewView
-        },
-        update = {
-            // Can be left empty for now
-        },
-        onRelease = {
-            // Explicitly unbind the camera when the AndroidView is removed from the screen
-            try {
-                val cameraProvider = cameraProviderFuture.get()
-                cameraProvider.unbindAll()
-            } catch (e: Exception) {
-                e.printStackTrace()
+                }, mainExecutor)
             }
         }
-    )
+    }
+
+    private fun bindCamera(cameraProvider: ProcessCameraProvider) {
+        val viewPort = checkNotNull(previewView.viewPort)
+        provider = cameraProvider
+        val cameraPreview = Preview.Builder().build().also {
+            preview = it
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+        val faceAnalyzer = FaceAnalyzer { frame ->
+            mainExecutor.execute {
+                if (!released && owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                    overlay.frame = frame
+                    onState(frame.quality)
+                    onCapture(frame)
+                    removeCallbacks(staleFrame)
+                    if (frame.quality != ScanQualityState.CAMERA_ERROR) postDelayed(staleFrame, 650L)
+                }
+            }
+        }.also { analyzer = it }
+
+        val cameraAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build().also {
+                analysis = it
+                it.setAnalyzer(executor, faceAnalyzer)
+            }
+        val useCases = UseCaseGroup.Builder()
+            .setViewPort(viewPort)
+            .addUseCase(cameraPreview)
+            .addUseCase(cameraAnalysis)
+            .build()
+        cameraProvider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, useCases)
+    }
+
+    override fun onStop(owner: LifecycleOwner) {
+        removeCallbacks(staleFrame)
+        overlay.frame = null
+        onState(ScanQualityState.FACE_LOST)
+    }
+
+    fun release() {
+        if (released) return
+        released = true
+        owner.lifecycle.removeObserver(this)
+        removeCallbacks(staleFrame)
+        overlay.frame = null
+        analysis?.clearAnalyzer()
+        provider?.unbind(*listOfNotNull(preview, analysis).toTypedArray())
+        analyzer?.close()
+        executor.shutdown()
+    }
+}
+
+@OptIn(TransformExperimental::class)
+private class FaceOverlay(context: Context, private val preview: PreviewView) : View(context) {
+    var frame: FaceFrame? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = resources.displayMetrics.density * 1.5f
+    }
+    private val path = Path()
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val result = frame ?: return
+        val source = result.transform ?: return
+        val target = preview.outputTransform ?: return
+        val coordinates = CoordinateTransform(source, target)
+
+        result.bounds?.let {
+            val bounds = RectF(it)
+            coordinates.mapRect(bounds)
+            paint.color = Color.argb(200, 240, 246, 252)
+            canvas.drawRoundRect(bounds, 10f, 10f, paint)
+        }
+        for ((region, outline) in result.outlines) {
+            val points = outline.copyOf()
+            coordinates.mapPoints(points)
+            path.rewind()
+            path.moveTo(points[0], points[1])
+            for (index in 2 until points.size step 2) path.lineTo(points[index], points[index + 1])
+            path.close()
+            paint.color = if (region in result.rgb) Color.rgb(52, 211, 153) else Color.rgb(245, 158, 11)
+            canvas.drawPath(path, paint)
+        }
+    }
 }
