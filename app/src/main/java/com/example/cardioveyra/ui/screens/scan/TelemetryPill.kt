@@ -1,76 +1,85 @@
 package com.example.cardioveyra.ui.screens.scan
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.cardioveyra.ui.theme.ThemeState
 
 @Composable
-fun TelemetryPill(state: ScanQualityState) {
-    // Read theme state
-    val systemIsDark = isSystemInDarkTheme()
-    val isDark = ThemeState.isDarkTheme ?: systemIsDark
+fun TelemetryPill(
+    bpm: String,
+    hrv: String,
+    quality: ScanQualityState,
+    isDark: Boolean
+) {
+    val pillBg = if (isDark) Color(0xFF131826) else Color(0xFFFFFFFF)
+    val pillBorder = if (isDark) Color(0xFF1E2538) else Color(0xFFE2E8F0)
+    val primaryText = if (isDark) Color(0xFFFFFFFF) else Color(0xFF0F172A)
+    val secondaryText = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
     
-    val surfaceColor = if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.05f)
-    val dividerColor = if (isDark) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.1f)
-    val textColor = if (isDark) Color.White else Color.Black
-    val labelColor = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f)
+    val qualityColor = when (quality) {
+        ScanQualityState.OPTIMAL -> SignalGreen
+        ScanQualityState.FACE_LOST, ScanQualityState.PERMISSION_DENIED, ScanQualityState.CAMERA_ERROR -> ErrorGrey
+        else -> WarningYellow
+    }
+    
+    val qualityText = when (quality) {
+        ScanQualityState.OPTIMAL -> "High"
+        ScanQualityState.FACE_LOST -> "Lost"
+        else -> "Low"
+    }
 
     Row(
         modifier = Modifier
-            .background(surfaceColor, RoundedCornerShape(50))
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(24.dp)
+            .padding(horizontal = 24.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(32.dp))
+            .background(pillBg)
+            .border(1.dp, pillBorder, RoundedCornerShape(32.dp))
+            .padding(vertical = 12.dp, horizontal = 24.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        // Pulse Data
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(Icons.Default.Favorite, contentDescription = null, tint = BrandRed, modifier = Modifier.size(20.dp))
-            Text("Pulse", color = labelColor, fontSize = 14.sp)
-            Text(if (state == ScanQualityState.FACE_LOST) "--" else "72", color = textColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("BPM", color = labelColor, fontSize = 10.sp)
+        // BPM Section
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.Default.Favorite, contentDescription = "Pulse", tint = BrandRed, modifier = Modifier.size(16.dp))
+            Text("Pulse", color = secondaryText, fontSize = 14.sp)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(bpm, color = primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(" BPM", color = secondaryText, fontSize = 10.sp, modifier = Modifier.padding(bottom = 2.dp, start = 2.dp))
+            }
         }
-
+        
         // Divider
-        Box(modifier = Modifier.width(1.dp).height(16.dp).background(dividerColor))
-
-        // Quality Data
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(Icons.Outlined.Speed, contentDescription = null, tint = SignalGreen, modifier = Modifier.size(20.dp))
-            Text("Quality", color = labelColor, fontSize = 14.sp)
-            Text(
-                text = when (state) {
-                    ScanQualityState.OPTIMAL -> "High"
-                    ScanQualityState.MOTION_WARNING, ScanQualityState.POOR_LIGHTING -> "Low"
-                    ScanQualityState.FACE_LOST -> "None"
-                },
-                color = when (state) {
-                    ScanQualityState.OPTIMAL -> SignalGreen
-                    ScanQualityState.MOTION_WARNING, ScanQualityState.POOR_LIGHTING -> WarningYellow
-                    ScanQualityState.FACE_LOST -> ErrorGrey
-                },
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+        Box(modifier = Modifier.width(1.dp).height(24.dp).background(pillBorder))
+        
+        // Quality Section
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.Default.Speed, contentDescription = "Quality", tint = qualityColor, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Quality ", color = secondaryText, fontSize = 14.sp)
+            Text(qualityText, color = qualityColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
