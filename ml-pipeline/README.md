@@ -1,6 +1,6 @@
-# 🧠 CardioLens ML & Algorithm Pipeline
+# 🧠 CardioVeyra ML & Algorithm Pipeline
 
-Welcome to the ML pipeline workspace for CardioLens! This directory is dedicated to offline dataset preprocessing, neural network model experimentation, TFLite model optimization, and Explainable AI (XAI).
+Welcome to the ML pipeline workspace for CardioVeyra! This directory is dedicated to offline dataset preprocessing, neural network model experimentation, TFLite model optimization, and Explainable AI (XAI).
 
 ---
 

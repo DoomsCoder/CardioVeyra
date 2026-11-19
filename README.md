@@ -1,9 +1,9 @@
 <div align="center">
 
 <!-- Logo placeholder: add your logo image to /docs/assets/logo.png and update the line below -->
-<!-- <img src="docs/assets/logo.png" alt="CardioLens logo" width="120"/> -->
+<!-- <img src="docs/assets/logo.png" alt="CardioVeyra logo" width="120"/> -->
 
-# CardioLens
+# CardioVeyra
 
 **Contactless cardiovascular screening using smartphone camera-based rPPG and explainable on-device AI.**
 
@@ -18,14 +18,14 @@
 
 ---
 
-CardioLens turns a standard Android smartphone camera into a contactless biometric sensor. It detects the microscopic, invisible color fluctuations in facial skin caused by blood volume changes with every heartbeat, and estimates **Heart Rate (HR)** and **Heart Rate Variability (HRV)** from that signal, entirely on-device, with no wearables, no external sensors, and no data ever leaving the phone.
+CardioVeyra turns a standard Android smartphone camera into a contactless biometric sensor. It detects the microscopic, invisible color fluctuations in facial skin caused by blood volume changes with every heartbeat, and estimates **Heart Rate (HR)** and **Heart Rate Variability (HRV)** from that signal, entirely on-device, with no wearables, no external sensors, and no data ever leaving the phone.
 
 Every result is paired with a plain-language explanation of what drove it, rather than a black-box number, using SHAP-based feature attribution.
 
 <div align="center">
 
 <!-- Screenshot/demo placeholder -->
-<!-- <img src="docs/assets/demo.gif" alt="CardioLens demo" width="280"/> -->
+<!-- <img src="docs/assets/demo.gif" alt="CardioVeyra demo" width="280"/> -->
 *Demo screenshots and GIF coming soon*
 
 </div>
@@ -51,7 +51,7 @@ Every result is paired with a plain-language explanation of what drove it, rathe
 
 ## How It Works
 
-CardioLens processes a live facial video feed in four stages:
+CardioVeyra processes a live facial video feed in four stages:
 
 ### 1. Sensing
 The app captures live facial video at 30-60 fps using Android's CameraX API. On-device face detection (ML Kit) identifies a stable region of interest (forehead/cheeks), and the app extracts the average RGB pixel values from that region on every frame, forming a raw time-series signal.
@@ -79,7 +79,7 @@ Face Video (CameraX) -> ROI Extraction (ML Kit) -> RGB Signal
 - **No external hardware required** — works with any standard Android smartphone camera.
 - **Fully on-device inference** — raw video is never uploaded or stored externally; only derived numeric metrics are used for any external processing step.
 - **Explainable by design** — every prediction includes a feature-level explanation, not just a risk score.
-- **Not a diagnostic device** — CardioLens is a screening aid intended to surface early indicators for further professional evaluation, not a certified medical device.
+- **Not a diagnostic device** — CardioVeyra is a screening aid intended to surface early indicators for further professional evaluation, not a certified medical device.
 
 ---
 
@@ -100,7 +100,7 @@ Face Video (CameraX) -> ROI Extraction (ML Kit) -> RGB Signal
 ## Project Structure
 
 ```
-CardioLens/
+CardioVeyra/
 ├── app/                     # Kotlin + Jetpack Compose Android application
 ├── python-training/         # Model training scripts and notebooks
 │   └── ubfc_evaluation.py      # Ground-truth loading & MAE evaluation utilities
@@ -115,7 +115,7 @@ CardioLens/
 
 ## Dataset & Evaluation Methodology
 
-CardioLens is trained and validated on the [UBFC-rPPG dataset](https://sites.google.com/view/ybenezeth/ubfcrppg), a public dataset of facial videos synchronized with ground-truth contact PPG sensor data.
+CardioVeyra is trained and validated on the [UBFC-rPPG dataset](https://sites.google.com/view/ybenezeth/ubfcrppg), a public dataset of facial videos synchronized with ground-truth contact PPG sensor data.
 
 > **Ground-truth rule:** Per the dataset's official documentation, the pre-computed Heart Rate column supplied with the dataset is **not** used as the evaluation baseline. Instead, ground-truth HR is derived by peak-detecting the raw contact PPG waveform directly, using the same method applied to the camera-derived (remote) PPG signal. This ensures a true apples-to-apples comparison between remote and contact PPG, consistent with how the dataset's original authors evaluated their own method.
 
@@ -140,7 +140,7 @@ Validation is performed in two stages:
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd CardioLens
+cd CardioVeyra
 
 # Set up the Python environment
 python -m venv venv
@@ -181,7 +181,7 @@ pip install numpy scipy opencv-python torch shap
 
 ## Reference Literature
 
-CardioLens builds on established and current research in camera-based physiological signal estimation:
+CardioVeyra builds on established and current research in camera-based physiological signal estimation:
 
 1. *A Flexible Framework for Design and Validation of rPPG Methods*, IEEE Access, vol. 13, 2025.
 2. S. G. Ahmed et al., *AI Innovations in rPPG Systems for Driver Monitoring: Comprehensive Systematic Review and Future Prospects*, IEEE Access, vol. 13, pp. 22893-22918, 2025.
@@ -191,7 +191,7 @@ CardioLens builds on established and current research in camera-based physiologi
 
 ## Limitations
 
-Camera-based rPPG accuracy is known to be sensitive to lighting conditions, motion, skin tone, and camera quality, this is a documented characteristic of the field, not unique to this implementation. CardioLens reports its measured accuracy transparently across tested conditions rather than claiming clinical-grade precision. It is intended as an accessible screening aid, not a replacement for validated medical devices.
+Camera-based rPPG accuracy is known to be sensitive to lighting conditions, motion, skin tone, and camera quality, this is a documented characteristic of the field, not unique to this implementation. CardioVeyra reports its measured accuracy transparently across tested conditions rather than claiming clinical-grade precision. It is intended as an accessible screening aid, not a replacement for validated medical devices.
 
 ---
 
