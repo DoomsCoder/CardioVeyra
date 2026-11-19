@@ -82,7 +82,7 @@ fun CameraXLivePreview(
 
                 val imageAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888) // TASK 1: Force RGBA
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888) // Use YUV for efficiency
                     .build()
                     .also { analysis ->
                         analysis.setAnalyzer(analyzerExecutor, FaceAnalyzer(

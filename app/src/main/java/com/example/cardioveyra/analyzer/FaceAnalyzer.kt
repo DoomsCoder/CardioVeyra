@@ -28,26 +28,19 @@ class FaceAnalyzer(
         val mediaImage = imageProxy.image
 
         if (mediaImage != null) {
+            // ML Kit can directly accept YUV_420_888
             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
 
-            // Extract byte array once for performance
-            val buffer = imageProxy.planes[0].buffer
-            val data = ByteArray(buffer.remaining())
-            buffer.get(data)
+            // 1. Fast overall luminance check using only the Y plane (Luma)
+            val yBuffer = imageProxy.planes[0].buffer
+            val yData = ByteArray(yBuffer.remaining())
+            yBuffer.get(yData)
+            yBuffer.rewind() // Rewind in case it's needed again
 
-            val pixelStride = imageProxy.planes[0].pixelStride
-            val rowStride = imageProxy.planes[0].rowStride
-
-            // 1. Fast overall luminance check (checking every 10th pixel for speed)
             var totalLuminance = 0L
             var lumPixels = 0
-            for (i in data.indices step 40) {
-                // In RGBA_8888, the first 3 bytes are R, G, B
-                val r = data[i].toInt() and 0xFF
-                val g = data.getOrNull(i + 1)?.toInt()?.and(0xFF) ?: 0
-                val b = data.getOrNull(i + 2)?.toInt()?.and(0xFF) ?: 0
-                // Rough luminance formula
-                totalLuminance += (r + g + b) / 3
+            for (i in yData.indices step 40) {
+                totalLuminance += yData[i].toInt() and 0xFF
                 lumPixels++
             }
             val averageLuminance = if (lumPixels > 0) totalLuminance.toDouble() / lumPixels else 255.0
@@ -85,14 +78,40 @@ class FaceAnalyzer(
                             var sumB = 0.0
                             var pixelCount = 0
 
+                            val yPlane = imageProxy.planes[0]
+                            val uPlane = imageProxy.planes[1]
+                            val vPlane = imageProxy.planes[2]
+
+                            val yBuffer = yPlane.buffer
+                            val uBuffer = uPlane.buffer
+                            val vBuffer = vPlane.buffer
+
+                            val yRowStride = yPlane.rowStride
+                            val yPixelStride = yPlane.pixelStride
+                            val uvRowStride = uPlane.rowStride
+                            val uvPixelStride = uPlane.pixelStride
+
                             // Step = 4 pixels to optimize processing speed
                             for (y in top..bottom step 4) {
                                 for (x in left..right step 4) {
-                                    val index = y * rowStride + x * pixelStride
-                                    if (index + 2 < data.size) {
-                                        sumR += data[index].toInt() and 0xFF
-                                        sumG += data[index + 1].toInt() and 0xFF
-                                        sumB += data[index + 2].toInt() and 0xFF
+                                    val yIndex = y * yRowStride + x * yPixelStride
+                                    // U and V planes are typically subsampled by a factor of 2 in both dimensions (YUV 4:2:0)
+                                    val uvIndex = (y / 2) * uvRowStride + (x / 2) * uvPixelStride
+
+                                    if (yIndex < yBuffer.capacity() && uvIndex < uBuffer.capacity() && uvIndex < vBuffer.capacity()) {
+                                        val yVal = (yBuffer.get(yIndex).toInt() and 0xFF)
+                                        // U and V are centered around 128
+                                        val uVal = (uBuffer.get(uvIndex).toInt() and 0xFF) - 128
+                                        val vVal = (vBuffer.get(uvIndex).toInt() and 0xFF) - 128
+
+                                        // Standard YUV to RGB conversion formulas
+                                        val r = (yVal + 1.370705f * vVal).toInt().coerceIn(0, 255)
+                                        val g = (yVal - 0.337633f * uVal - 0.698001f * vVal).toInt().coerceIn(0, 255)
+                                        val b = (yVal + 1.732446f * uVal).toInt().coerceIn(0, 255)
+
+                                        sumR += r
+                                        sumG += g
+                                        sumB += b
                                         pixelCount++
                                     }
                                 }
